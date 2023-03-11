@@ -1,0 +1,192 @@
+var featureCollection0 = pie.FeatureCollection("NGCC/CHINA_COUNTY_BOUNDARY");
+var js = featureCollection0.filter(pie.Filter.eq("name", "方山县")).first().geometry();
+var js1 = pie.Geometry.Polygon(js);
+Map.addLayer(js, { color: "ffff00ff", fillColor: "00000000" })
+
+//导入MOD19A2中波段Optical_Depth_047，AOD气溶胶数据
+var AOD2000 = pie.Image('user/LENG123/biyesheji/AOD2000');
+var AOD2005 = pie.Image('user/LENG123/biyesheji/AOD2005');
+var AOD2010 = pie.Image('user/LENG123/biyesheji/AOD2010');
+var AOD2015 = pie.Image('user/LENG123/biyesheji/AOD2015');
+var AOD2020 = pie.Image('user/LENG123/biyesheji/AOD2020');
+//导入所需数据集 
+var MOD09A1 = pie.ImageCollection("USGS/MOD09A1/006");
+var MOD11A2 = pie.ImageCollection("USGS/MOD11A2/006");
+var MOD13A1 = pie.ImageCollection("USGS/MOD13A1/006");
+Map.centerObject(js,5);
+//构建云掩膜函数
+function cloudfree_mod09a1(image) {
+    var qa = image.select('sur_refl_state_500m')
+    var cloudState0 = 1 << 0;
+    var cloudState1 = 1 << 1;
+    var cloudShadowState = 1 << 2;
+    var cirrusState8 = 1 << 8;
+    var cirrusState9 = 1 << 9;
+    var mask = qa.bitwiseAnd(cloudState0).eq(0)
+        .and(qa.bitwiseAnd(cloudState1).eq(0))
+        .and(qa.bitwiseAnd(cloudShadowState).eq(0)) // No cloud shadow
+        .and(qa.bitwiseAnd(cirrusState8).eq(0))
+        .and(qa.bitwiseAnd(cirrusState9).eq(0)) // No cirrus
+    return image.updateMask(mask)
+}
+
+//筛选09A1影像准备真色彩波段验证云掩膜
+var recentimage = MOD09A1
+    .filterDate("2021-10-01", "2021-12-30")
+    .filterBounds(js)
+    .select(["sur_refl_b01", "sur_refl_b03", "sur_refl_b04", "sur_refl_b06", "sur_refl_state_500m"])
+    .map(cloudfree_mod09a1)
+    .mosaic()
+    .clip(js);
+var visParam = {
+    min: -100,
+    max: 3000,
+    bands: ["sur_refl_b01", "sur_refl_b04", "sur_refl_b03"]
+}
+
+//构建水体指数函数
+function MNDWI(img) {
+    var blue = img.select("sur_refl_b03")
+    var green = img.select("sur_refl_b04");
+    var swir1 = img.select("sur_refl_b06");
+    var swir2 = img.select("sur_refl_b07");
+    var nir = img.select("sur_refl_b02");
+    var mndwi = green.subtract(swir1).divide(green.add(swir1)).rename(mndwi)
+    var aweinsh = blue.add(green.multiply(2.5))
+        .subtract(nir.add(swir1).multiply(1.5))
+        .subtract(swir2.multiply(0.25))
+        .rename(aweinsh);
+    var awei = green.subtract(swir1)
+        .multiply(4)
+        .subtract(nir.multiply(0.25).add(swir2.multiply(2.75)))
+        .rename(awei);
+    var ndwi = green.subtract(nir)
+        .divide(green.add(nir))
+        .rename(ndwi);
+    return mndwi
+}
+
+//以阈值为0创建水体掩膜
+var WaterMask = MNDWI(recentimage).lt(0);
+
+//处理AOD影像数据 
+var AOD = AOD2020.clip(js).updateMask(WaterMask);
+var aod_max = AOD.reduceRegion(pie.Reducer.max(), js, 1000).get('B1');
+aod_max = pie.Number(aod_max);
+var aod_min = AOD.reduceRegion(pie.Reducer.min(), js, 1000).get('B1');
+aod_min = pie.Number(aod_min);
+var finallst = (AOD.subtract(aod_min)).divide(aod_max.subtract(aod_min));
+//筛选时间地区，水体掩膜处理
+
+var LST = MOD11A2.filterDate("2021-06-01", "2021-09-30")
+    .filterBounds(js)
+    .select('LST_Day_1km')
+    .mean()
+    .clip(js)
+    .multiply(0.02)
+    .subtract(273.15)
+    .rename('lst')
+    .updateMask(WaterMask);
+var lst_max = LST.reduceRegion(pie.Reducer.max(), js, 1000).get('lst');
+lst_max = pie.Number(lst_max);
+//print(lst_max)
+var lst_min = LST.reduceRegion(pie.Reducer.min(), js, 1000).get('lst');
+lst_min = pie.Number(lst_min);
+//print(lst_min)
+var finallst = (LST.subtract(lst_min)).divide(lst_max.subtract(lst_min));
+//print(finallst)
+var NDVI = MOD13A1.filterDate("2021-06-01", "2021-09-30")
+    .filterBounds(js)
+    .select('NDVI')
+    .mean()
+    .clip(js)
+    .multiply(0.0001)
+    .rename('ndvi');
+var ndvi_max = NDVI.reduceRegion(pie.Reducer.max(), js, 1000).get('ndvi');
+ndvi_max = pie.Number(ndvi_max);
+var ndvi_min = NDVI.reduceRegion(pie.Reducer.min(), js, 1000).get('ndvi');
+ndvi_min = pie.Number(ndvi_min);
+var finalndvi = (NDVI.subtract(ndvi_min)).divide(ndvi_max.subtract(ndvi_min));
+
+var srIMG0 = MOD09A1
+    .filterDate("2021-10-01", "2021-12-30")
+    .filterBounds(js)
+    .select(["sur_refl_b01", "sur_refl_b02", "sur_refl_b03", "sur_refl_b04",
+        "sur_refl_b05", "sur_refl_b06", "sur_refl_b07", "sur_refl_state_500m"
+    ])
+    .map(cloudfree_mod09a1)
+    .mosaic()
+    .clip(js)
+    .updateMask(WaterMask);
+
+//计算湿度
+var WET = srIMG0.select("sur_refl_b01").multiply(0.1147) //红波段
+    .add(srIMG0.select("sur_refl_b02").multiply(0.2489)) //近红外波段1
+    .add(srIMG0.select("sur_refl_b03").multiply(0.2408)) //蓝波段
+    .add(srIMG0.select("sur_refl_b04").multiply(0.3132)) //绿波段
+    .add(srIMG0.select("sur_refl_b05").multiply(-0.3122)) //近红外波段2
+    .add(srIMG0.select("sur_refl_b06").multiply(-0.6416)) //短波红外1
+    .add(srIMG0.select("sur_refl_b07").multiply(-0.5087)) //短波红外2
+    .multiply(0.0001)
+    .rename("wet");
+var wet_max = WET.reduceRegion(pie.Reducer.max(), js, 1000).get('wet');
+wet_max = pie.Number(wet_max);
+var wet_min = WET.reduceRegion(pie.Reducer.min(), js, 1000).get('wet');
+wet_min = pie.Number(wet_min);
+var finalwet = (WET.subtract(wet_min)).divide(wet_max.subtract(wet_min));
+
+//计算干度
+var sswir1 = srIMG0.select("sur_refl_b06");
+var rred = srIMG0.select("sur_refl_b01");
+var nnir1 = srIMG0.select("sur_refl_b02");
+var bblue = srIMG0.select("sur_refl_b03");
+var ggreen = srIMG0.select("sur_refl_b04");
+var si = sswir1.add(rred)
+        .subtract(nnir1.add(bblue))
+        .divide(sswir1.add(rred).add(nnir1.add(bblue)));
+var ibi = sswir1.multiply(2).divide(sswir1.add(nnir1))
+    .subtract(nnir1.divide(nnir1.add(rred)).add(ggreen.divide(ggreen.add(sswir1))))
+    .divide(sswir1.multiply(2).divide(sswir1.add(nnir1))
+        .add(nnir1.divide(nnir1.add(rred)).add(ggreen.divide(ggreen.add(sswir1)))));
+var NDBSI = si.add(ibi).divide(2).rename('ndbsi');
+var bsi_max = NDBSI.reduceRegion(pie.Reducer.max(), js, 1000).get('ndbsi');
+bsi_max = pie.Number(bsi_max);
+var bsi_min = NDBSI.reduceRegion(pie.Reducer.min(), js, 1000).get('ndbsi');
+bsi_min = pie.Number(bsi_min);
+var finalndbsi = (NDBSI.subtract(bsi_min)).divide(bsi_max.subtract(bsi_min));
+
+var index =  finallst.addBands(finalwet).addBands(finalndvi).addBands(finalndbsi).addBands(AOD);
+print(index);
+
+var eigenDic = index.pcaEigen(js,1000);
+//print(eigenDic);
+var eigenVector = pie.Array(eigenDic.get("eigenVector"));
+//print(eigenVector);
+var resultImg = index.pca(eigenVector);
+///print(resultImg);
+//var index1 = index.select(["LST","NDVI","WET","NDBSI"]);
+//var eigenVector = pie.Array(js); 
+//print(eigenVector);
+//var resultImg = index1.pca(eigenVector);
+print(resultImg);
+//Map.addLayer(resultImg.select("pc_0"),{min:-71,max:350},"ImageLayer");
+
+//将主成分分析所得到的第一主成分波段进行归一化处理
+var index0 = resultImg.select('pc_0');
+print(index0);
+var rsei_max = index0.reduceRegion(pie.Reducer.max(), js, 1000).get('pc_0');
+rsei_max = pie.Number(rsei_max);
+//print(rsei_max);
+var rsei_min = index0.reduceRegion(pie.Reducer.min(), js, 1000).get('pc_0');
+rsei_min = pie.Number(rsei_min);
+var finalRSEI = index0.subtract(rsei_min).divide(rsei_max.subtract(rsei_min));
+Map.addLayer(resultImg.select("pc_0"),{min:0,max:1},"ImageLayer");
+//print(finalRSEI);
+Export.image({
+    image:finalRSEI,
+    description: "dem_to_download",
+    assetId: "dem_to_download",
+    region:js,
+    scale: 1000
+});
+print("e");
