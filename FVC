@@ -1,0 +1,62 @@
+var featureCollection0 = pie.FeatureCollection("NGCC/CHINA_CITY_BOUNDARY");
+var roi = featureCollection0.filter(pie.Filter.eq("name", "徐州市")).first().geometry();
+function landsatcloud(image){
+    var qa = image.select("BQA");
+    var cloudMask = qa.bitwiseAnd(1<<4).eq(0);
+    var rgbImage = image.select(['B4','B5','B6'])
+                    .updateMask(cloudMask);
+    return rgbImage;
+}
+
+function Fvc(image){
+    var b4 = image.select("B4")//定义红波段;
+    var b5 = image.select("B5")//定义近红外波段;
+    var  Ndvi = (b5.subtract(b4)).divide(b4.add(b5));//ndvi计算，ndwi=(b5-b4)/(b5+b3)
+    print(Ndvi);
+    //var ndvi_per = ndvi.reduceRegion(pie.Reducer.percentile([2, 98]), roi,30).get("ndvi");
+    //var ndvi_min = pie.Number(pie.Dictionary(ndvi_per).get("p2"));
+    //var ndvi_max = pie.Number(pie.Dictionary(ndvi_per).get("p98"));
+     //var fvc = (ndvi.subtract(ndvi_min)).divide(ndvi_max.subtract(ndvi_min));
+    /*var ndvi_max = Ndvi.reduceRegion(pie.Reducer.max(), roi, 1000).get("ndvi");
+    ndvi_max = pie.Number(ndvi_max);
+    print(ndvi_max);
+    var ndvi_min = Ndvi.reduceRegion(pie.Reducer.min(), roi, 1000).get("ndvi");
+    ndvi_min = pie.Number(ndvi_min);
+    var res = (Ndvi.subtract(ndvi_min)).divide(ndvi_max.subtract(ndvi_min));
+    print(res);
+    return res;*/
+}
+//加载Landsat8 Collection2 SR数据集并日期、云量筛选
+var img = pie.ImageCollection('LC08/01/T1')
+             .filterBounds(roi)
+            .filterDate("2016-1-1", "2016-10-5")
+            .map(landsatcloud)
+            .mean()
+            .clip(roi);
+print(img);
+
+    var b4 = img.select("B4")//定义红波段;
+    var b5 = img.select("B5")//定义近红外波段;
+    var Ndvi = (b5.subtract(b4)).divide(b4.add(b5));//ndvi计算，ndwi=(b5-b4)/(b5+b3)
+    print(Ndvi);
+    //var ndvi_per = ndvi.reduceRegion(pie.Reducer.percentile([2, 98]), roi,30).get("ndvi");
+    //var ndvi_min = pie.Number(pie.Dictionary(ndvi_per).get("p2"));
+    //var ndvi_max = pie.Number(pie.Dictionary(ndvi_per).get("p98"));
+     //var fvc = (ndvi.subtract(ndvi_min)).divide(ndvi_max.subtract(ndvi_min));
+    var ndvi_max = Ndvi.reduceRegion(pie.Reducer.max(), roi, 30).get("B5");
+    ndvi_max = pie.Number(ndvi_max);
+    print(ndvi_max);
+    var ndvi_min = Ndvi.reduceRegion(pie.Reducer.min(), roi, 30).get("B5");
+    ndvi_min = pie.Number(ndvi_min);
+    var res = (Ndvi.subtract(ndvi_min)).divide(ndvi_max.subtract(ndvi_min));
+    print(res);
+Map.centerObject(roi, 8);
+//加载显示计算结果
+Map.addLayer(img,{min: 0,max: 1,palette: ['ffffcc', 'a1dab4', '41b6c4', '225ea8']},"ImageLayer");
+Export.image({
+    image:Ndvi,
+    description: "dem_to_download",
+    assetId: "dem_to_download",
+    region:roi,//选择影像范围
+    scale: 30//选择影像分辨率
+});
